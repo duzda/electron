@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: duzda <25201406+duzda@users.noreply.github.com>
+Date: Thu, 16 Mar 2023 10:57:46 +0100
+Subject: feat: changeable pulseaudio product string
+
+This patch makes product string changeable for pulseaudio. 
+Chromium uses hardcoded strings such as Google Chrome or 
+Chromium, this is unlikely to change. This patch allows 
+Electron applications to use custom name.
+
+diff --git a/content/browser/utility_process_host.cc b/content/browser/utility_process_host.cc
+index c544d1ef0eb381da7f96013643c862f60984a9c9..9f3c8f90464719fb9a7563371b8ec21b4decf012 100644
+--- a/content/browser/utility_process_host.cc
++++ b/content/browser/utility_process_host.cc
+@@ -320,6 +320,7 @@ bool UtilityProcessHost::StartProcess() {
+     BUILDFLAG(IS_SOLARIS)
+       switches::kAlsaInputDevice,
+       switches::kAlsaOutputDevice,
++      switches::kPulseAudioProductString,
+ #endif
+ #if defined(USE_CRAS)
+       switches::kUseCras,
+diff --git a/media/audio/pulse/pulse_util.cc b/media/audio/pulse/pulse_util.cc
+index 054ab8b305d9ebaa3af75138b8a6616ea3060e2b..5b277490ba397bed23033d5da6a576715a105853 100644
+--- a/media/audio/pulse/pulse_util.cc
++++ b/media/audio/pulse/pulse_util.cc
+@@ -10,6 +10,7 @@
+ #include <memory>
+ #include <type_traits>
+ 
++#include "base/command_line.h"
+ #include "base/files/file_path.h"
+ #include "base/logging.h"
+ #include "base/memory/ptr_util.h"
+@@ -35,13 +36,9 @@ namespace pulse {
+ 
+ namespace {
+ 
+-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+-constexpr char kBrowserDisplayName[] = "google-chrome";
+-#define PRODUCT_STRING "Google Chrome"
+-#else
++constexpr char kPulseAudioProductString[] = "pulseaudio-product-string";
+ constexpr char kBrowserDisplayName[] = "chromium-browser";
+-#define PRODUCT_STRING "Chromium"
+-#endif
++#define PRODUCT_STRING "Electron"
+ 
+ #if defined(DLOPEN_PULSEAUDIO)
+ static const base::FilePath::CharType kPulseLib[] =
+@@ -216,8 +213,15 @@ bool InitPulse(pa_threaded_mainloop** mainloop, pa_context** context) {
+     return false;
+ 
+   pa_mainloop_api* pa_mainloop_api = pa_threaded_mainloop_get_api(pa_mainloop);
+-  pa_context* pa_context =
+-      pa_context_new(pa_mainloop_api, PRODUCT_STRING " input");
++  pa_context* pa_context;
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch(kPulseAudioProductString)) {
++    std::string productString =
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(kPulseAudioProductString);
++    productString += " input";
++    pa_context = pa_context_new(pa_mainloop_api, productString.c_str());
++  } else {
++    pa_context = pa_context_new(pa_mainloop_api, PRODUCT_STRING " input");
++  }
+   if (!pa_context) {
+     pa_threaded_mainloop_free(pa_mainloop);
+     return false;
+@@ -495,8 +499,15 @@ bool CreateOutputStream(pa_threaded_mainloop** mainloop,
+   RETURN_ON_FAILURE(*mainloop, "Failed to create PulseAudio main loop.");
+ 
+   pa_mainloop_api* pa_mainloop_api = pa_threaded_mainloop_get_api(*mainloop);
+-  *context = pa_context_new(
+-      pa_mainloop_api, app_name.empty() ? PRODUCT_STRING : app_name.c_str());
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch(kPulseAudioProductString)) {
++    std::string productString =
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(kPulseAudioProductString);
++    *context = pa_context_new(pa_mainloop_api, app_name.empty() ? productString.c_str()
++      : app_name.c_str());
++  } else {
++    *context = pa_context_new(pa_mainloop_api, app_name.empty() ? PRODUCT_STRING
++      : app_name.c_str());
++  }
+   RETURN_ON_FAILURE(*context, "Failed to create PulseAudio context.");
+ 
+   // A state callback must be set before calling pa_threaded_mainloop_lock() or
+diff --git a/media/base/media_switches.cc b/media/base/media_switches.cc
+index d250ce6e9396ca56b678d1c348468db78aa49630..18e24521e0a31fd9ba9665bef30fa6c0d655ed36 100644
+--- a/media/base/media_switches.cc
++++ b/media/base/media_switches.cc
+@@ -59,6 +59,8 @@ const char kReportVp9AsAnUnsupportedMimeType[] =
+ const char kAlsaInputDevice[] = "alsa-input-device";
+ // The Alsa device to use when opening an audio stream.
+ const char kAlsaOutputDevice[] = "alsa-output-device";
++// Pulseaudio product string
++const char kPulseAudioProductString[] = "pulseaudio-product-string";
+ #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
+         // BUILDFLAG(IS_FREEBSD) || BUILDFLAG(IS_SOLARIS)
+ 
+diff --git a/media/base/media_switches.h b/media/base/media_switches.h
+index d24dc841d6ba59a0f59a353168bdc2e1815812a0..e50049c9513fc72d5524ec61a97d05603d820465 100644
+--- a/media/base/media_switches.h
++++ b/media/base/media_switches.h
+@@ -45,6 +45,7 @@ MEDIA_EXPORT extern const char kReportVp9AsAnUnsupportedMimeType[];
+     BUILDFLAG(IS_SOLARIS)
+ MEDIA_EXPORT extern const char kAlsaInputDevice[];
+ MEDIA_EXPORT extern const char kAlsaOutputDevice[];
++MEDIA_EXPORT extern const char kPulseAudioProductString[];
+ #endif
+ 
+ #if BUILDFLAG(IS_WIN)
